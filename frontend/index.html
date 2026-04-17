@@ -221,7 +221,7 @@
 <script>
 const API = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
   ? "http://127.0.0.1:5000"
-  : "RENDER_BACKEND_URL";  // Will be replaced after Render deployment
+  : "https://mistakehalflifeproject.onrender.com";
 let authToken = localStorage.getItem("authToken") || "";
 let currentUser = JSON.parse(localStorage.getItem("currentUserInfo") || "null");
 let mistakeData = [];
