@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite3
+.env
+venv/
+env/
+.vscode/backend/mistake_halflife.db
+*.log
+
+# Large binary / document files
+*.docx
+*.pptx
+*.pdf
+~$*
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Node
+node_modules/
