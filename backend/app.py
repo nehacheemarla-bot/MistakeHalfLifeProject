@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, Response
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from openai import OpenAI
 from datetime import datetime, timezone
 from functools import wraps
-import os, secrets, json
+import os, secrets, json, csv, io
 
 app = Flask(__name__)
 CORS(app)
@@ -76,6 +76,10 @@ def register():
     password = data.get("password", "").strip()
     if not username or not password:
         return jsonify({"error": "Username and password required"}), 400
+    if len(username) < 3:
+        return jsonify({"error": "Username must be at least 3 characters"}), 400
+    if len(password) < 4:
+        return jsonify({"error": "Password must be at least 4 characters"}), 400
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 409
     user = User(username=username, password_hash=generate_password_hash(password))
@@ -169,6 +173,90 @@ def clear_mistakes():
     MistakeEntry.query.filter_by(user_id=g.user_id).delete()
     db.session.commit()
     return jsonify({"message": "All entries cleared"})
+
+# ── Stats endpoint (enhanced) ───────────────────────────────────
+@app.route("/stats", methods=["GET"])
+@require_auth
+def get_stats():
+    """Returns aggregate statistics for the authenticated user."""
+    entries = MistakeEntry.query.filter_by(user_id=g.user_id).order_by(MistakeEntry.created_at).all()
+    if not entries:
+        return jsonify({
+            "total_days": 0,
+            "total_mistakes": 0,
+            "improvement_pct": 0,
+            "streak": 0,
+            "top_type": None,
+            "avg_per_day": 0
+        })
+
+    total_mistakes = 0
+    freq = {}
+    for e in entries:
+        for d in e.details:
+            total_mistakes += d.count
+            freq[d.mistake_type] = freq.get(d.mistake_type, 0) + d.count
+
+    # Improvement
+    first_total = sum(d.count for d in entries[0].details)
+    last_total = sum(d.count for d in entries[-1].details)
+    improvement = max(min(((first_total - last_total) / first_total * 100) if first_total > 0 else 0, 100), 0)
+
+    # Streak
+    dates = sorted(set(e.date for e in entries), reverse=True)
+    streak = 1
+    for i in range(1, len(dates)):
+        from datetime import timedelta
+        d1 = datetime.strptime(dates[i - 1], "%Y-%m-%d")
+        d2 = datetime.strptime(dates[i], "%Y-%m-%d")
+        if (d1 - d2).days <= 1:
+            streak += 1
+        else:
+            break
+
+    # Top type
+    top_type = max(freq, key=freq.get) if freq else None
+
+    return jsonify({
+        "total_days": len(entries),
+        "total_mistakes": total_mistakes,
+        "improvement_pct": round(improvement, 1),
+        "streak": streak,
+        "top_type": top_type,
+        "avg_per_day": round(total_mistakes / len(entries), 1) if entries else 0
+    })
+
+# ── CSV Export ───────────────────────────────────────────────────
+@app.route("/export/csv", methods=["GET"])
+@require_auth
+def export_csv():
+    """Export user's mistake data as CSV."""
+    entries = MistakeEntry.query.filter_by(user_id=g.user_id).order_by(MistakeEntry.created_at).all()
+
+    # Collect all types
+    all_types = set()
+    for e in entries:
+        for d in e.details:
+            all_types.add(d.mistake_type)
+    all_types = sorted(all_types)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Day", "Date"] + all_types + ["Total"])
+
+    for i, e in enumerate(entries):
+        detail_map = {d.mistake_type: d.count for d in e.details}
+        row = [i + 1, e.date]
+        for t in all_types:
+            row.append(detail_map.get(t, 0))
+        row.append(sum(d.count for d in e.details))
+        writer.writerow(row)
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment;filename=mistake_data.csv"}
+    )
 
 # ── Admin endpoints ──────────────────────────────────────────────
 @app.route("/admin/users", methods=["GET"])
@@ -304,18 +392,26 @@ def chat():
                 ]
             )
             reply = response.choices[0].message.content
-            return jsonify({"reply": reply})
+            return jsonify({"reply": reply, "source": "openai"})
         except Exception:
             pass  # Fall through to local fallback
 
     # Local fallback
     reply = local_fallback_answer(question)
-    return jsonify({"reply": reply})
+    return jsonify({"reply": reply, "source": "local"})
 
-# ── Home ─────────────────────────────────────────────────────────
+# ── Health Check ─────────────────────────────────────────────────
 @app.route("/")
 def home():
-    return "Mistake Half-Life Backend is running!"
+    return jsonify({
+        "status": "running",
+        "service": "Mistake Half-Life Backend",
+        "version": "2.0.0"
+    })
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
 # ── Init DB + seed admin ─────────────────────────────────────────
 def init_db():
