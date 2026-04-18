@@ -2654,7 +2654,20 @@ async function downloadReport() {
   if (prevSection) document.getElementById(prevSection)?.classList.add("active");
 
   setLoading(false);
-  doc.save(`mistake_halflife_report_${currentUser?.username || "user"}_${new Date().toISOString().split("T")[0]}.pdf`);
+
+  // Force proper .pdf filename — avoids UUID download bug in Chrome/Edge
+  const pdfFilename = `mistake_halflife_report_${currentUser?.username || "user"}_${new Date().toISOString().split("T")[0]}.pdf`;
+  const pdfBlob = doc.output("blob");
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  const dlLink = document.createElement("a");
+  dlLink.href = pdfUrl;
+  dlLink.download = pdfFilename;
+  dlLink.type = "application/pdf";
+  document.body.appendChild(dlLink);
+  dlLink.click();
+  document.body.removeChild(dlLink);
+  setTimeout(() => URL.revokeObjectURL(pdfUrl), 2000);
+
   showToast("PDF with charts downloaded! 📄", "success");
 }
 
